@@ -2883,6 +2883,7 @@ fn spawn_deploy_task(
             tls_certificate: config.tls_certificate.as_deref(),
             scope: "deploy",
             volumes: &volumes_vec(&config.volumes),
+            docker_network: config.docker_network.as_deref(),
         });
 
         match agent.post_long("/git/deploy", Some(deploy_body), 120).await {
@@ -3087,6 +3088,7 @@ fn spawn_deploy_task(
                     let monitor_effective_mode = effective_mode;
                     let monitor_config_tls_certificate = config.tls_certificate.clone();
                     let monitor_config_volumes = volumes_vec(&config.volumes);
+                    let monitor_config_network = config.docker_network.clone();
 
                     tokio::spawn(async move {
                         // Check container health every 15s for 2 minutes
@@ -3904,6 +3906,7 @@ pub async fn trigger_deploy_task(
         tls_certificate: config.tls_certificate.as_deref(),
         scope: "deploy",
         volumes: &volumes_vec(&config.volumes),
+            docker_network: config.docker_network.as_deref(),
     });
 
     match agent.post_long("/git/deploy", Some(deploy_body), 120).await {
@@ -4952,6 +4955,7 @@ mod tests {
             tls_certificate: None,
             scope: "deploy",
             volumes: &[],
+            docker_network: None,
         })
     }
 
@@ -4994,6 +4998,7 @@ mod tests {
             tls_certificate: None,
             scope: "deploy",
             volumes: &["/data".to_string(), "/app/uploads".to_string()],
+            docker_network: None,
         });
         assert_eq!(body["volumes"], serde_json::json!(["/data", "/app/uploads"]));
     }
@@ -5043,6 +5048,7 @@ mod tests {
             tls_certificate: None,
             scope: "deploy",
             volumes: &[],
+            docker_network: None,
         });
         assert_eq!(body["tls_mode"], "acme");
         assert_eq!(body["ssl_email"], "ops@example.com");
