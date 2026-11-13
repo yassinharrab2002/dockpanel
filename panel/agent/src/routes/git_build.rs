@@ -95,9 +95,6 @@ fn is_valid_volume_path(path: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '_' | '-' | '.'))
 }
 
-/// At most this many declared volumes per deploy — a sane bound on an
-/// operator-editable list, not a resource limit the deploy itself needs.
-
 /// Validate a Docker network name before it reaches the Docker API.
 fn is_valid_docker_network(name: &str) -> bool {
     !name.is_empty()
@@ -107,6 +104,9 @@ fn is_valid_docker_network(name: &str) -> bool {
             .bytes()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'.' | b'-'))
 }
+
+/// At most this many declared volumes per deploy — a sane bound on an
+/// operator-editable list, not a resource limit the deploy itself needs.
 
 const MAX_VOLUMES: usize = 10;
 
