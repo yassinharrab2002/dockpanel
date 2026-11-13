@@ -5004,6 +5004,16 @@ mod tests {
     }
 
     #[test]
+    fn docker_network_names_reject_unsafe_values() {
+        for name in ["lynqo-net", "bridge", "prod_1", "network.v2"] {
+            assert!(super::is_valid_docker_network_name(name));
+        }
+        for name in ["", "../host", "net/name", "bad name", "-leading", "x;id"] {
+            assert!(!super::is_valid_docker_network_name(name));
+        }
+    }
+
+    #[test]
     fn configured_docker_network_is_forwarded_to_the_agent() {
         let body = build_deploy_body(DeployBody {
             name: "app",
