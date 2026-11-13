@@ -95,8 +95,19 @@ fn is_valid_volume_path(path: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '_' | '-' | '.'))
 }
 
+/// Validate a Docker network name before it reaches the Docker API.
+fn is_valid_docker_network(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 128
+        && name.as_bytes()[0].is_ascii_alphanumeric()
+        && name
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'.' | b'-'))
+}
+
 /// At most this many declared volumes per deploy — a sane bound on an
 /// operator-editable list, not a resource limit the deploy itself needs.
+
 const MAX_VOLUMES: usize = 10;
 
 fn validate_volumes(volumes: &[String]) -> Result<(), &'static str> {
@@ -207,6 +218,9 @@ struct DeployRequest {
     /// `#[serde(default)]` here — an old panel simply never declares volumes.
     #[serde(default)]
     volumes: Vec<String>,
+    /// Optional existing Docker network to attach the deployment to.
+    #[serde(default)]
+    docker_network: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -354,6 +368,11 @@ async fn deploy_container(
             return Err(err(StatusCode::BAD_REQUEST, "Invalid domain"));
         }
     }
+    if let Some(network) = body.docker_network.as_deref() {
+        if !is_valid_docker_network(network) {
+            return Err(err(StatusCode::BAD_REQUEST, "Invalid Docker network name"));
+        }
+    }
     if let Err(msg) = validate_volumes(&body.volumes) {
         return Err(err(StatusCode::BAD_REQUEST, msg));
     }
@@ -371,6 +390,12 @@ async fn deploy_container(
         return Err(err(
             StatusCode::BAD_REQUEST,
             "volumes are not supported for preview deployments",
+        ));
+    }
+    if scope != ownership::GitScope::Deploy && body.docker_network.is_some() {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "docker_network is not supported for preview deployments",
         ));
     }
 
@@ -409,6 +434,7 @@ async fn deploy_container(
         body.cpu_percent,
         tls,
         &body.volumes,
+        body.docker_network.as_deref(),
     )
     .await
     .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
@@ -785,7 +811,17 @@ pub fn router() -> Router<AppState> {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_safe_nginx_domain, is_valid_volume_path, validate_volumes};
+    use super::{is_safe_nginx_domain, is_valid_docker_network, is_valid_volume_path, validate_volumes};
+
+    #[test]
+    fn docker_network_name_validation_is_conservative() {
+        for name in ["lynqo-net", "bridge", "prod_1", "network.v2"] {
+            assert!(is_valid_docker_network(name), "{name:?} must be allowed");
+        }
+        for name in ["", "../host", "net/name", "bad name", "-leading", "x;id"] {
+            assert!(!is_valid_docker_network(name), "{name:?} must be rejected");
+        }
+    }
 
     #[test]
     fn volume_path_rejects_traversal_and_free_form_hosts() {

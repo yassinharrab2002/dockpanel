@@ -34,12 +34,23 @@ use crate::AppState;
 /// `PROVIDED_TLS_MIN_AGENT` — same reasoning, same failure shape.
 pub(crate) const PRE_BUILD_SPLICE_MIN_AGENT: &str = "2.182.0";
 
+/// Accept only Docker's conservative network-name character set.
+fn is_valid_docker_network_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 128
+        && name.as_bytes()[0].is_ascii_alphanumeric()
+        && name
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'.' | b'-'))
+}
+
 /// The row plus the alias of the certificate it references, if any — mirrors
 /// `stacks::STACK_SELECT`: a LEFT JOIN because most deploys reference none,
 /// and the alias is what the API and the deploy body speak; the id never
 /// leaves the panel. `id`/`user_id`/`server_id` are ambiguous once joined
 /// against `tls_certificates` (which carries all three itself), so every
 /// caller of this constant must qualify its own WHERE clause with `d.`.
+
 const GIT_DEPLOY_SELECT: &str = "SELECT d.id, d.user_id, d.server_id, d.name, d.repo_url, \
     d.branch, d.dockerfile, d.container_port, d.host_port, d.domain, d.env_vars, \
     d.auto_deploy, d.webhook_secret, d.deploy_key_public, d.deploy_key_path, \
@@ -47,7 +58,7 @@ const GIT_DEPLOY_SELECT: &str = "SELECT d.id, d.user_id, d.server_id, d.name, d.
     d.pre_build_cmd, d.post_deploy_cmd, d.build_args, d.build_context, d.last_deploy, \
     d.last_commit, d.created_at, d.updated_at, d.github_token, d.deploy_cron, \
     d.deploy_protected, d.build_method, d.preview_ttl_hours, d.scheduled_deploy_at, \
-    d.tls_mode, d.tls_certificate_id, d.volumes, c.alias AS tls_certificate \
+    d.tls_mode, d.tls_certificate_id, d.docker_network, d.volumes, c.alias AS tls_certificate \
     FROM git_deploys d LEFT JOIN tls_certificates c ON c.id = d.tls_certificate_id";
 
 /// git_previews.container_name is stored WITH the `dockpanel-git-` prefix that
@@ -214,6 +225,8 @@ pub struct GitDeploy {
     /// agent (#118) — a JSON array of strings, e.g. `["/data", "/app/uploads"]`.
     /// Never sent to a preview deploy; see `handle_preview_deploy`.
     pub volumes: serde_json::Value,
+    /// Optional Docker network attached to the deployed container.
+    pub docker_network: Option<String>,
     /// That certificate's alias, joined in by `GIT_DEPLOY_SELECT`. Defaulted
     /// so `create`/`update`'s plain `RETURNING *` (no join in a RETURNING
     /// clause) still maps onto this struct; both handlers set it by hand
@@ -268,6 +281,8 @@ pub(crate) struct DeployBody<'a> {
     /// are withheld there too, and the agent's `deploy_container` route refuses
     /// a non-empty list for any scope but `"deploy"` as the actual boundary.
     pub volumes: &'a [String],
+    /// Optional existing Docker network for the deployed container.
+    pub docker_network: Option<&'a str>,
 }
 
 /// The address the agent is handed for THIS deploy. Only an ACME order needs
@@ -396,6 +411,9 @@ pub(crate) fn build_deploy_body(b: DeployBody<'_>) -> serde_json::Value {
     if !b.volumes.is_empty() {
         body["volumes"] = serde_json::json!(b.volumes);
     }
+    if let Some(network) = b.docker_network.filter(|n| !n.trim().is_empty()) {
+        body["docker_network"] = serde_json::json!(network);
+    }
     // An emptied text column arrives here as Some("") rather than None, because
     // clearing a field is expressed as the empty string on the wire (the shape
     // v2.120.0 settled on for the alert destinations). Blank is absent for both
@@ -464,6 +482,7 @@ pub struct CreateRequest {
     pub deploy_protected: Option<bool>,
     pub preview_ttl_hours: Option<i32>,
     pub volumes: Option<Vec<String>>,
+    pub docker_network: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -496,6 +515,8 @@ pub struct UpdateRequest {
     /// ever `None` for a caller that omits the key entirely — matching how
     /// `env_vars`/`build_args` already behave on this handler.
     pub volumes: Option<Vec<String>>,
+    /// Absent means keep; an empty string clears the network selection.
+    pub docker_network: Option<String>,
 }
 
 /// GET /api/git-deploys — List all git deploys for the current user.
@@ -631,6 +652,11 @@ pub async fn create(
         return Err(err(StatusCode::BAD_REQUEST, msg));
     }
     let volumes_json = serde_json::to_value(&volumes).unwrap_or(serde_json::json!([]));
+    if let Some(network) = body.docker_network.as_deref().filter(|n| !n.trim().is_empty()) {
+        if !is_valid_docker_network_name(network) {
+            return Err(err(StatusCode::BAD_REQUEST, "Invalid Docker network name"));
+        }
+    }
 
     // Format, reserved and every owner — see services::domain_claim. The two
     // conflict queries that used to be inlined here are the ones `update` never
@@ -715,8 +741,8 @@ pub async fn create(
         };
 
     let mut deploy: GitDeploy = sqlx::query_as(
-        "INSERT INTO git_deploys (user_id, server_id, name, repo_url, branch, dockerfile, container_port, host_port, domain, env_vars, auto_deploy, webhook_secret, memory_mb, cpu_percent, ssl_email, pre_build_cmd, post_deploy_cmd, build_args, build_context, github_token, deploy_cron, deploy_protected, preview_ttl_hours, tls_mode, tls_certificate_id, volumes) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26) \
+        "INSERT INTO git_deploys (user_id, server_id, name, repo_url, branch, dockerfile, container_port, host_port, domain, env_vars, auto_deploy, webhook_secret, memory_mb, cpu_percent, ssl_email, pre_build_cmd, post_deploy_cmd, build_args, build_context, github_token, deploy_cron, deploy_protected, preview_ttl_hours, tls_mode, tls_certificate_id, volumes, docker_network) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27) \
          RETURNING *",
     )
     .bind(claims.sub)
@@ -750,6 +776,7 @@ pub async fn create(
     .bind(mode)
     .bind(tls_certificate_id)
     .bind(&volumes_json)
+    .bind(body.docker_network.as_deref().filter(|n| !n.trim().is_empty()))
     .fetch_one(&state.db)
     .await
     .map_err(|e| {
@@ -964,6 +991,11 @@ pub async fn update(
         return Err(err(StatusCode::BAD_REQUEST, msg));
     }
     let volumes = body.volumes.as_ref().map(|v| serde_json::to_value(v).unwrap_or_default());
+    if let Some(network) = body.docker_network.as_deref().filter(|n| !n.trim().is_empty()) {
+        if !is_valid_docker_network_name(network) {
+            return Err(err(StatusCode::BAD_REQUEST, "Invalid Docker network name"));
+        }
+    }
 
     let github_token_enc =
         encrypt_stored_token(body.github_token.as_deref(), &state.config.jwt_secret)?;
@@ -1078,8 +1110,9 @@ pub async fn update(
          tls_mode = $19, \
          tls_certificate_id = $20, \
          volumes = COALESCE($21, volumes), \
+         docker_network = CASE WHEN $22 = '' THEN NULL ELSE COALESCE($22, docker_network) END, \
          updated_at = NOW() \
-         WHERE id = $22 AND user_id = $23 \
+         WHERE id = $23 AND user_id = $24 \
          RETURNING *",
     )
     .bind(body.repo_url.as_deref())
@@ -1103,6 +1136,7 @@ pub async fn update(
     .bind(mode)
     .bind(tls_certificate_id)
     .bind(volumes)
+    .bind(body.docker_network.as_deref())
     .bind(id)
     .bind(claims.sub)
     .fetch_one(&state.db)
@@ -1818,6 +1852,7 @@ pub async fn rollback(
             tls_certificate: config.tls_certificate.as_deref(),
             scope: "deploy",
             volumes: &volumes_vec(&config.volumes),
+            docker_network: config.docker_network.as_deref(),
         });
 
         match agent.post_long("/git/deploy", Some(deploy_body), 120).await {
@@ -2848,6 +2883,7 @@ fn spawn_deploy_task(
             tls_certificate: config.tls_certificate.as_deref(),
             scope: "deploy",
             volumes: &volumes_vec(&config.volumes),
+            docker_network: config.docker_network.as_deref(),
         });
 
         match agent.post_long("/git/deploy", Some(deploy_body), 120).await {
@@ -3052,6 +3088,7 @@ fn spawn_deploy_task(
                     let monitor_effective_mode = effective_mode;
                     let monitor_config_tls_certificate = config.tls_certificate.clone();
                     let monitor_config_volumes = volumes_vec(&config.volumes);
+                    let monitor_config_network = config.docker_network.clone();
 
                     tokio::spawn(async move {
                         // Check container health every 15s for 2 minutes
@@ -3096,6 +3133,7 @@ fn spawn_deploy_task(
                                             tls_certificate: monitor_config_tls_certificate.as_deref(),
                                             scope: "deploy",
                                             volumes: &monitor_config_volumes,
+                                            docker_network: monitor_config_network.as_deref(),
                                         });
 
                                         if monitor_agent.post_long("/git/deploy", Some(rollback_body), 120).await.is_ok() {
@@ -3868,6 +3906,7 @@ pub async fn trigger_deploy_task(
         tls_certificate: config.tls_certificate.as_deref(),
         scope: "deploy",
         volumes: &volumes_vec(&config.volumes),
+        docker_network: config.docker_network.as_deref(),
     });
 
     match agent.post_long("/git/deploy", Some(deploy_body), 120).await {
@@ -4293,6 +4332,7 @@ async fn handle_preview_deploy(
             tls_certificate: tls_certificate.as_deref(),
             scope: "preview",
             volumes: &[],
+            docker_network: None,
         });
 
         // Same refusal `spawn_deploy_task`/`trigger_deploy_task` apply: an
@@ -4915,6 +4955,7 @@ mod tests {
             tls_certificate: None,
             scope: "deploy",
             volumes: &[],
+            docker_network: None,
         })
     }
 
@@ -4957,8 +4998,40 @@ mod tests {
             tls_certificate: None,
             scope: "deploy",
             volumes: &["/data".to_string(), "/app/uploads".to_string()],
+            docker_network: None,
         });
         assert_eq!(body["volumes"], serde_json::json!(["/data", "/app/uploads"]));
+    }
+
+    #[test]
+    fn docker_network_names_reject_unsafe_values() {
+        for name in ["lynqo-net", "bridge", "prod_1", "network.v2"] {
+            assert!(super::is_valid_docker_network_name(name));
+        }
+        for name in ["", "../host", "net/name", "bad name", "-leading", "x;id"] {
+            assert!(!super::is_valid_docker_network_name(name));
+        }
+    }
+
+    #[test]
+    fn configured_docker_network_is_forwarded_to_the_agent() {
+        let body = build_deploy_body(DeployBody {
+            name: "app",
+            image_tag: "dockpanel-git-app:abc",
+            container_port: 3000,
+            host_port: 30001,
+            env_vars: &serde_json::json!({}),
+            domain: None,
+            memory_mb: None,
+            cpu_percent: None,
+            ssl_email: None,
+            tls_mode: None,
+            tls_certificate: None,
+            scope: "deploy",
+            volumes: &[],
+            docker_network: Some("lynqo-net"),
+        });
+        assert_eq!(body["docker_network"], "lynqo-net");
     }
 
     #[test]
@@ -4983,6 +5056,7 @@ mod tests {
             tls_certificate: Some("wildcard-2026"),
             scope: "deploy",
             volumes: &[],
+            docker_network: None,
         });
         assert_eq!(body["tls_mode"], "provided");
         assert_eq!(body["tls_certificate"], "wildcard-2026");
@@ -5005,6 +5079,7 @@ mod tests {
             tls_certificate: None,
             scope: "deploy",
             volumes: &[],
+            docker_network: None,
         });
         assert_eq!(body["tls_mode"], "acme");
         assert_eq!(body["ssl_email"], "ops@example.com");

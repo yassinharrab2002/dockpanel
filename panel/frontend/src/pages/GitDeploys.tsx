@@ -71,6 +71,7 @@ interface GitDeploy {
   // (#118) — the host side is never operator-supplied. Always empty for
   // anything the panel deploys as a preview.
   volumes: string[];
+  docker_network: string | null;
 }
 
 interface GitPreview {
@@ -176,6 +177,7 @@ export default function GitDeploys() {
   const [formProtected, setFormProtected] = useState(false);
   const [formPreviewTtl, setFormPreviewTtl] = useState(24);
   const [formVolumes, setFormVolumes] = useState<string[]>([]);
+  const [formDockerNetwork, setFormDockerNetwork] = useState("");
 
   const loadDeploys = async () => {
     try {
@@ -244,6 +246,7 @@ export default function GitDeploys() {
     setFormCron("");
     setFormProtected(false);
     setFormVolumes([]);
+    setFormDockerNetwork("");
   };
 
   const openCreate = () => {
@@ -278,6 +281,7 @@ export default function GitDeploys() {
     setFormProtected(selected.deploy_protected || false);
     setFormPreviewTtl(selected.preview_ttl_hours ?? 24);
     setFormVolumes(selected.volumes || []);
+    setFormDockerNetwork(selected.docker_network || "");
     setEditing(true);
     setShowModal(true);
   };
@@ -333,6 +337,8 @@ export default function GitDeploys() {
       // clearing every row here removes the last volume on the next deploy
       // rather than leaving a stale one behind.
       volumes: formVolumes.map((v) => v.trim()).filter(Boolean),
+      // Optional Docker network is applied when the next container is created.
+      docker_network: formDockerNetwork.trim(),
     };
     try {
       if (editing && selected) {
@@ -797,6 +803,7 @@ export default function GitDeploys() {
                   { label: "Dockerfile", value: selected.dockerfile },
                   { label: "Container Port", value: String(selected.container_port) },
                   { label: "Host Port", value: String(selected.host_port) },
+                  { label: "Docker Network", value: selected.docker_network || "Default" },
                   { label: "Domain", value: selected.domain || "\u2014" },
                   { label: "Auto-deploy", value: selected.auto_deploy ? "Enabled" : "Disabled" },
                   { label: "Status", value: selected.status },
@@ -1413,6 +1420,25 @@ export default function GitDeploys() {
                     </div>
                   </>
                 )}
+              </div>
+
+              {/* Docker Network */}
+              <div>
+                <label className="block text-sm font-medium text-dark-100 mb-1">Docker Network (optional)</label>
+                <input
+                  type="text"
+                  value={formDockerNetwork}
+                  onChange={(e) => setFormDockerNetwork(e.target.value)}
+                  placeholder="e.g. lynqo-net"
+                  maxLength={128}
+                  className="w-full px-3 py-2 border border-dark-500 rounded-lg text-sm font-mono focus:ring-2 focus:ring-accent-500 outline-none"
+                />
+                <p className="text-xs text-dark-300 mt-1">
+                  Connect the deployed container directly to an existing Docker network so it can reach
+                  services such as PostgreSQL and Redis by their container or service names. Leave blank
+                  to use Docker's default networking. The network must already exist on the target server.
+                  Takes effect on the next deploy.
+                </p>
               </div>
 
               {/* Persistent Volumes */}
