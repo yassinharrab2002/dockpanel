@@ -1852,7 +1852,7 @@ pub async fn rollback(
             tls_certificate: config.tls_certificate.as_deref(),
             scope: "deploy",
             volumes: &volumes_vec(&config.volumes),
-        docker_network: config.docker_network.as_deref(),
+            docker_network: config.docker_network.as_deref(),
         });
 
         match agent.post_long("/git/deploy", Some(deploy_body), 120).await {
@@ -3906,7 +3906,7 @@ pub async fn trigger_deploy_task(
         tls_certificate: config.tls_certificate.as_deref(),
         scope: "deploy",
         volumes: &volumes_vec(&config.volumes),
-            docker_network: config.docker_network.as_deref(),
+        docker_network: config.docker_network.as_deref(),
     });
 
     match agent.post_long("/git/deploy", Some(deploy_body), 120).await {
