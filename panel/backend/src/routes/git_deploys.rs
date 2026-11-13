@@ -34,13 +34,6 @@ use crate::AppState;
 /// `PROVIDED_TLS_MIN_AGENT` — same reasoning, same failure shape.
 pub(crate) const PRE_BUILD_SPLICE_MIN_AGENT: &str = "2.182.0";
 
-/// The row plus the alias of the certificate it references, if any — mirrors
-/// `stacks::STACK_SELECT`: a LEFT JOIN because most deploys reference none,
-/// and the alias is what the API and the deploy body speak; the id never
-/// leaves the panel. `id`/`user_id`/`server_id` are ambiguous once joined
-/// against `tls_certificates` (which carries all three itself), so every
-/// caller of this constant must qualify its own WHERE clause with `d.`.
-
 /// Accept only Docker's conservative network-name character set.
 fn is_valid_docker_network_name(name: &str) -> bool {
     !name.is_empty()
@@ -50,6 +43,13 @@ fn is_valid_docker_network_name(name: &str) -> bool {
             .bytes()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'.' | b'-'))
 }
+
+/// The row plus the alias of the certificate it references, if any — mirrors
+/// `stacks::STACK_SELECT`: a LEFT JOIN because most deploys reference none,
+/// and the alias is what the API and the deploy body speak; the id never
+/// leaves the panel. `id`/`user_id`/`server_id` are ambiguous once joined
+/// against `tls_certificates` (which carries all three itself), so every
+/// caller of this constant must qualify its own WHERE clause with `d.`.
 
 const GIT_DEPLOY_SELECT: &str = "SELECT d.id, d.user_id, d.server_id, d.name, d.repo_url, \
     d.branch, d.dockerfile, d.container_port, d.host_port, d.domain, d.env_vars, \
@@ -1852,7 +1852,7 @@ pub async fn rollback(
             tls_certificate: config.tls_certificate.as_deref(),
             scope: "deploy",
             volumes: &volumes_vec(&config.volumes),
-            docker_network: config.docker_network.as_deref(),
+        docker_network: config.docker_network.as_deref(),
         });
 
         match agent.post_long("/git/deploy", Some(deploy_body), 120).await {
