@@ -5004,6 +5004,27 @@ mod tests {
     }
 
     #[test]
+    fn configured_docker_network_is_forwarded_to_the_agent() {
+        let body = build_deploy_body(DeployBody {
+            name: "app",
+            image_tag: "dockpanel-git-app:abc",
+            container_port: 3000,
+            host_port: 30001,
+            env_vars: &serde_json::json!({}),
+            domain: None,
+            memory_mb: None,
+            cpu_percent: None,
+            ssl_email: None,
+            tls_mode: None,
+            tls_certificate: None,
+            scope: "deploy",
+            volumes: &[],
+            docker_network: Some("lynqo-net"),
+        });
+        assert_eq!(body["docker_network"], "lynqo-net");
+    }
+
+    #[test]
     fn provided_mode_sends_the_alias_and_withholds_the_acme_address() {
         // A `provided`-mode config is never sent an `ssl_email` — an agent
         // that still infers the mode from its presence must not be told to
