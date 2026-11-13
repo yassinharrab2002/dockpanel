@@ -245,7 +245,7 @@ honest:
 | HTTP routes | 840 (545 backend + 295 agent) | derived | every commit |
 | Regression-pin assertions | 4544 (137 suites) | derived | every commit |
 | Frontend pages | 52 | derived | every commit |
-| DB migrations | 138 | derived | every commit |
+| DB migrations | 139 | derived | every commit |
 | Supervised background services | 17 | derived | every commit |
 
 Five of these were wrong when the register was built (s272), some by a factor of
