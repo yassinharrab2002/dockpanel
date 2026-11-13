@@ -811,7 +811,17 @@ pub fn router() -> Router<AppState> {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_safe_nginx_domain, is_valid_volume_path, validate_volumes};
+    use super::{is_safe_nginx_domain, is_valid_docker_network, is_valid_volume_path, validate_volumes};
+
+    #[test]
+    fn docker_network_name_validation_is_conservative() {
+        for name in ["lynqo-net", "bridge", "prod_1", "network.v2"] {
+            assert!(is_valid_docker_network(name), "{name:?} must be allowed");
+        }
+        for name in ["", "../host", "net/name", "bad name", "-leading", "x;id"] {
+            assert!(!is_valid_docker_network(name), "{name:?} must be rejected");
+        }
+    }
 
     #[test]
     fn volume_path_rejects_traversal_and_free_form_hosts() {
