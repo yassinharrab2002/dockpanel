@@ -911,6 +911,7 @@ pub async fn deploy_or_update(
                 &labels,
                 &exposed_ports,
                 host_config,
+                docker_network,
             )
             .await?;
 
@@ -1561,9 +1562,17 @@ async fn create_and_start(
     env_list: &[String],
     labels: &HashMap<String, String>,
     exposed_ports: &HashMap<String, HashMap<(), ()>>,
-    host_config: bollard::service::HostConfig,
+    mut host_config: bollard::service::HostConfig,
     docker_network: Option<&str>,
 ) -> Result<String, String> {
+    // HostConfig.network_mode selects a named user-defined network as part of
+    // container creation. This is deliberately create-time (not a post-deploy
+    // network connect), so health checks and blue-green promotion see the
+    // application on its required network from the first start.
+    if let Some(network) = docker_network {
+        host_config.network_mode = Some(network.to_string());
+    }
+
     let config = Config {
         image: Some(image_tag.to_string()),
         env: if env_list.is_empty() {
@@ -1574,12 +1583,6 @@ async fn create_and_start(
         exposed_ports: Some(exposed_ports.clone()),
         host_config: Some(host_config),
         labels: Some(labels.clone()),
-        networking_config: docker_network.map(|network| bollard::service::NetworkingConfig {
-            endpoints_config: Some(HashMap::from([(
-                network.to_string(),
-                bollard::service::EndpointSettings::default(),
-            )])),
-        }),
         ..Default::default()
     };
 
@@ -1749,7 +1752,7 @@ async fn blue_green_update(
     let mut exposed_ports = HashMap::new();
     exposed_ports.insert(container_port_key, HashMap::new());
 
-    let host_config = bollard::service::HostConfig {
+    let mut host_config = bollard::service::HostConfig {
         port_bindings: Some(port_bindings),
         restart_policy: Some(bollard::service::RestartPolicy {
             name: Some(bollard::service::RestartPolicyNameEnum::UNLESS_STOPPED),
@@ -1761,6 +1764,11 @@ async fn blue_green_update(
         cpu_quota: base_host_config.cpu_quota,
         ..Default::default()
     };
+    // Attach the blue container before it starts; its health check must
+    // exercise the network it will use after promotion.
+    if let Some(network) = docker_network {
+        host_config.network_mode = Some(network.to_string());
+    }
 
     let config = Config {
         image: Some(image_tag.to_string()),
@@ -1772,12 +1780,6 @@ async fn blue_green_update(
         exposed_ports: Some(exposed_ports),
         host_config: Some(host_config),
         labels: Some(labels.clone()),
-        networking_config: docker_network.map(|network| bollard::service::NetworkingConfig {
-            endpoints_config: Some(HashMap::from([(
-                network.to_string(),
-                bollard::service::EndpointSettings::default(),
-            )])),
-        }),
         ..Default::default()
     };
 
