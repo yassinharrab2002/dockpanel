@@ -544,6 +544,7 @@ pub async fn deploy_or_update(
     cpu_percent: Option<u64>,
     tls: TlsIntent<'_>,
     volumes: &[String],
+    docker_network: Option<&str>,
 ) -> Result<GitDeployResult, String> {
     // Held for the whole deploy/update, including the internal blue-green
     // swap this function may perform — `blue_green_update` is called FROM
@@ -553,6 +554,13 @@ pub async fn deploy_or_update(
 
     let docker =
         Docker::connect_with_local_defaults().map_err(|e| format!("Docker connect failed: {e}"))?;
+
+    if let Some(network) = docker_network {
+        docker
+            .inspect_network(network, None)
+            .await
+            .map_err(|e| format!("Docker network '{network}' is unavailable: {e}"))?;
+    }
 
     let container_name = format!("dockpanel-git-{name}");
 
@@ -713,6 +721,7 @@ pub async fn deploy_or_update(
                     old_port,
                     bg_domain,
                     &host_config,
+                    docker_network,
                 )
                 .await;
             }
@@ -834,6 +843,7 @@ pub async fn deploy_or_update(
                 &labels,
                 &exposed_ports,
                 host_config,
+                docker_network,
             )
             .await?;
 
@@ -1552,6 +1562,7 @@ async fn create_and_start(
     labels: &HashMap<String, String>,
     exposed_ports: &HashMap<String, HashMap<(), ()>>,
     host_config: bollard::service::HostConfig,
+    docker_network: Option<&str>,
 ) -> Result<String, String> {
     let config = Config {
         image: Some(image_tag.to_string()),
@@ -1563,6 +1574,12 @@ async fn create_and_start(
         exposed_ports: Some(exposed_ports.clone()),
         host_config: Some(host_config),
         labels: Some(labels.clone()),
+        networking_config: docker_network.map(|network| bollard::service::NetworkingConfig {
+            endpoints_config: Some(HashMap::from([(
+                network.to_string(),
+                bollard::service::EndpointSettings::default(),
+            )])),
+        }),
         ..Default::default()
     };
 
@@ -1706,6 +1723,7 @@ async fn blue_green_update(
     old_port: u16,
     domain: &str,
     base_host_config: &bollard::service::HostConfig,
+    docker_network: Option<&str>,
 ) -> Result<GitDeployResult, String> {
     let temp_port = crate::services::docker_apps::find_free_port()?;
     tracing::info!(
@@ -1754,6 +1772,12 @@ async fn blue_green_update(
         exposed_ports: Some(exposed_ports),
         host_config: Some(host_config),
         labels: Some(labels.clone()),
+        networking_config: docker_network.map(|network| bollard::service::NetworkingConfig {
+            endpoints_config: Some(HashMap::from([(
+                network.to_string(),
+                bollard::service::EndpointSettings::default(),
+            )])),
+        }),
         ..Default::default()
     };
 
