@@ -557,7 +557,10 @@ pub async fn deploy_or_update(
 
     if let Some(network) = docker_network {
         docker
-            .inspect_network(network, None)
+            .inspect_network(
+                network,
+                None::<bollard::query_parameters::InspectNetworkOptions>,
+            )
             .await
             .map_err(|e| format!("Docker network '{network}' is unavailable: {e}"))?;
     }
